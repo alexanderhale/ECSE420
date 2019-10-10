@@ -1,121 +1,173 @@
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include "lodepng.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#define MAX_MSE 0.00001f
 
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
+__global__ void process_rectification(unsigned char* image, unsigned char* new_image, unsigned int size, unsigned int thread_number) {
+	// process image
+	//unsigned int thread_pos = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
+	unsigned int thread_id = (threadIdx.x + blockIdx.x * blockDim.x + blockIdx.y * blockDim.y * blockDim.x);
 
-__global__ void addKernel(int *c, const int *a, const int *b)
+	for (unsigned int i = (size * thread_id)/ thread_number; i < (size *(thread_id + 1))/thread_number; i++) {
+		if ((i-3)%4 !=0) {
+			if (image[i] < 127) {
+				new_image[i] = 127;
+			}
+			else {
+				new_image[i] = image[i];
+			}
+		} else {
+			new_image[i] = image[i];
+		}
+	}
+}
+
+__global__ void compression(unsigned char* image, unsigned char* new_image, unsigned height, unsigned width, unsigned int size, unsigned int thread_number) {
+
+	//unsigned int thread_id = (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);
+	unsigned int thread_id = (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);
+	// process image
+	//printf("height: %d, width: %d\n", height, width);
+	for (unsigned int i = thread_id; i < size / 16; i = i + thread_number) {
+		unsigned int y = (i / (width / 2)) * 2;
+		unsigned int x = (i % (width / 2)) * 2;
+		//printf("thread id: %d, x: %d, y: %d \n", thread_id, x, y);
+		for (unsigned int type = 0; type < 4; type++) {
+			unsigned int value = image[4 * width * y + 4 * x + type];
+			if (value < image[4 * width * y + 4 * (x + 1) + type]) {
+				value = image[4 * width * y + 4 * (x + 1) + type];
+			}
+			if (value < image[4 * width * (y + 1) + 4 * x + type]) {
+				value = image[4 * width * (y + 1) + 4 * x + type];
+			}
+			if (value < image[4 * width * (y + 1) + 4 * (x + 1) + type]) {
+				value = image[4 * width * (y + 1) + 4 * (x + 1) + type];
+			}
+			new_image[width * y + x*2 + type] = value;
+
+			//printf("new value: %d, at coord: %d\n", value, width * y + x*2 + type);
+		}
+	}
+}
+
+float get_MSE(char* input_filename_1, char* input_filename_2)
 {
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
+	unsigned error1, error2;
+	unsigned char* image1, * image2;
+	unsigned width1, height1, width2, height2;
+
+	error1 = lodepng_decode32_file(&image1, &width1, &height1, input_filename_1);
+	error2 = lodepng_decode32_file(&image2, &width2, &height2, input_filename_2);
+	if (error1) printf("error %u: %s\n", error1, lodepng_error_text(error1));
+	if (error2) printf("error %u: %s\n", error2, lodepng_error_text(error2));
+	if (width1 != width2) printf("images do not have same width\n");
+	if (height1 != height2) printf("images do not have same height\n");
+
+	// process image
+	float im1, im2, diff, sum, MSE;
+	sum = 0;
+	for (int i = 0; i < width1 * height1; i++) {
+		im1 = (float)image1[i];
+		im2 = (float)image2[i];
+		diff = im1 - im2;
+		sum += diff * diff;
+	}
+	MSE = sqrt(sum) / (width1 * height1);
+
+	free(image1);
+	free(image2);
+
+	return MSE;
 }
 
 int main()
 {
-    const int arraySize = 5;
-    const int a[arraySize] = { 1, 2, 3, 4, 5 };
-    const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    int c[arraySize] = { 0 };
+	// variable definitions
+	unsigned error;
+	unsigned char *image, *new_image;
+	unsigned char* cuda_image, * cuda_new_image;
+	unsigned width, height;
+	unsigned int size_image;
 
-    // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
-        return 1;
-    }
+	// input definitions (hardcoding isn't as elegant, but is easier than passing in command-line arguments)
+		// TODO add command-line arguments back in before project submission
+	char* filename1 = "test.png";						// change these depending on what we're doing
+	char* filename2 = "test_pooling_result.png";		// output for rectify & pooling, file2 for comparison
+	char* mode = "pooling";							
 
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
+	// load input image
+	error = lodepng_decode32_file(&image, &width, &height, filename1);
+	if (error) printf("error %u: %s\n", error, lodepng_error_text(error));
 
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
+	// define number of threads (TODO huh?)
+	unsigned int thread_number = 1500;
+	unsigned int thread_max = 1024;
+	if (thread_number < thread_max) {
+		thread_max = thread_number;
+	}
 
-    return 0;
-}
+	if (strcmp(mode, "rectify") == 0) {
+		size_image = width * height * 4 * sizeof(unsigned char);
+		new_image = (unsigned char*)malloc(size_image);
 
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-{
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
+		cudaMalloc((void**)& cuda_image, size_image);
+		cudaMalloc((void**)& cuda_new_image, size_image);
 
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
+		cudaMemcpy(cuda_image, image, size_image, cudaMemcpyHostToDevice);
 
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+		if (thread_number > size_image) {
+			thread_number = size_image;
+		}
+		//(unsigned int)((int))+1
+		process_rectification <<<thread_number / 1024 + 1, thread_max >>>(cuda_image, cuda_new_image, size_image, thread_number);
+		cudaDeviceSynchronize();
+		cudaMemcpy(new_image, cuda_new_image, size_image, cudaMemcpyDeviceToHost);
+		cudaFree(cuda_image);
+		cudaFree(cuda_new_image);
 
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+		lodepng_encode32_file(filename2, new_image, width, height);
+	}
+	else if (strcmp(mode, "pooling") == 0) {
+		size_image = width * height * 4 * sizeof(unsigned char);
+		new_image = (unsigned char*)malloc(size_image);
 
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+		cudaMalloc((void**)& cuda_image, size_image);
+		cudaMalloc((void**)& cuda_new_image, size_image);
 
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+		cudaMemcpy(cuda_image, image, size_image, cudaMemcpyHostToDevice);
 
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+		if (thread_number > size_image/16) {
+			thread_number = size_image;
+		}
+		compression<<<thread_number / 1024 + 1, thread_max >>>(cuda_image, cuda_new_image, height, width, size_image, thread_number);
+		cudaDeviceSynchronize();
+		cudaMemcpy(new_image, cuda_new_image, size_image, cudaMemcpyDeviceToHost);
+		cudaFree(cuda_image);
+		cudaFree(cuda_new_image);
 
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
+		lodepng_encode32_file(filename2, new_image, width/2, height/2);
+	}
 
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
+	else if (strcmp(mode, "compare") == 0) {
+		// get mean squared error between image1 and image2
+		float MSE = get_MSE(filename1, filename2);
 
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+		if (MSE < MAX_MSE) {
+			printf("Images are equal (MSE = %f, MAX_MSE = %f)\n", MSE, MAX_MSE);
+		}
+		else {
+			printf("Images are NOT equal (MSE = %f, MAX_MSE = %f)\n", MSE, MAX_MSE);
+		}
+		return 0;
+	}
 
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
+
+	free(image);
+	free(new_image);
+	return 0;
 }

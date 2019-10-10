@@ -35,8 +35,8 @@ void process(char* input_filename, char* output_filename)
 
 int main(int argc, char *argv[])
 {
-  char* input_filename = argv[1];
-  char* output_filename = argv[2];
+  char* input_filename = "test.png";
+  char* output_filename = "test_out.png";
 
   process(input_filename, output_filename);
 
