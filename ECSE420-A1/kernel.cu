@@ -11,7 +11,7 @@
 __global__ void process_rectification(unsigned char* image, unsigned char* new_image, unsigned int size, unsigned int thread_number) {
 	// process image
 	//unsigned int thread_pos = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
-	unsigned int thread_id = (threadIdx.x + blockIdx.x * blockDim.x + blockIdx.y * blockDim.y * blockDim.x);
+	unsigned int thread_id = (threadIdx.x + blockIdx.x * blockDim.x + blockIdx.y * blockDim.y * blockDim.y);
 
 	for (unsigned int i = (size * thread_id)/ thread_number; i < (size *(thread_id + 1))/thread_number; i++) {
 		if ((i-3)%4 !=0) {
@@ -23,6 +23,24 @@ __global__ void process_rectification(unsigned char* image, unsigned char* new_i
 			}
 		} else {
 			new_image[i] = image[i];
+		}
+	}
+}
+
+__global__ void process_rectification2(unsigned char* image, unsigned char* new_image, unsigned int size, unsigned int thread_number) {
+	unsigned int index = threadIdx.x + blockIdx.x * thread_number;// blockDim.x;
+
+	if (index < size) {
+		unsigned int pixels_per_thread = size / thread_number;
+		unsigned int end = index + pixels_per_thread;
+
+		for (unsigned int i = index; i < end; i++) {
+			if (image[i] < 127) {
+				new_image[i] = 127;
+			}
+			else {
+				new_image[i] = image[i];
+			}
 		}
 	}
 }
@@ -97,56 +115,63 @@ int main()
 	// input definitions (hardcoding isn't as elegant, but is easier than passing in command-line arguments)
 		// TODO add command-line arguments back in before project submission
 	char* filename1 = "test.png";						// change these depending on what we're doing
-	char* filename2 = "test_pooling_result.png";		// output for rectify & pooling, file2 for comparison
-	char* mode = "pooling";							
+	char* filename2 = "test_rectify_result.png";		// output for rectify & pooling, file2 for comparison
+	// change mode
+	char* mode = "rectify";							
 
 	// load input image
 	error = lodepng_decode32_file(&image, &width, &height, filename1);
 	if (error) printf("error %u: %s\n", error, lodepng_error_text(error));
 
-	// define number of threads (TODO huh?)
-	unsigned int thread_number = 1500;
-	unsigned int thread_max = 1024;
-	if (thread_number < thread_max) {
-		thread_max = thread_number;
-	}
+	// define number of threads
+	unsigned int thread_number = 1024;		// number of threads per block we're using
+	unsigned int thread_max = 1024;			// hardware limit: maximum number of threads per block
 
+	// Rectify
 	if (strcmp(mode, "rectify") == 0) {
 		size_image = width * height * 4 * sizeof(unsigned char);
 		new_image = (unsigned char*)malloc(size_image);
 
+		//allocates storage on gpu
 		cudaMalloc((void**)& cuda_image, size_image);
 		cudaMalloc((void**)& cuda_new_image, size_image);
 
+		//cpu copies input data from cpu to gpu
 		cudaMemcpy(cuda_image, image, size_image, cudaMemcpyHostToDevice);
-
-		if (thread_number > size_image) {
-			thread_number = size_image;
-		}
-		//(unsigned int)((int))+1
-		process_rectification <<<thread_number / 1024 + 1, thread_max >>>(cuda_image, cuda_new_image, size_image, thread_number);
+		
+		// call method on device
+		unsigned int num_blocks = (size_image + thread_number - 1) / thread_number;
+		process_rectification2 <<< num_blocks, thread_number >>> (cuda_image, cuda_new_image, size_image, thread_number);
 		cudaDeviceSynchronize();
+
+		//cpu copies input data from gpu back to cpu
 		cudaMemcpy(new_image, cuda_new_image, size_image, cudaMemcpyDeviceToHost);
 		cudaFree(cuda_image);
 		cudaFree(cuda_new_image);
 
 		lodepng_encode32_file(filename2, new_image, width, height);
 	}
+	// Pooling
 	else if (strcmp(mode, "pooling") == 0) {
 		size_image = width * height * 4 * sizeof(unsigned char);
-		new_image = (unsigned char*)malloc(size_image);
+		new_image = (unsigned char*) malloc(size_image);
 
+		//allocates storage on gpu
 		cudaMalloc((void**)& cuda_image, size_image);
 		cudaMalloc((void**)& cuda_new_image, size_image);
 
+		//cpu copies input data from cpu to gpu
 		cudaMemcpy(cuda_image, image, size_image, cudaMemcpyHostToDevice);
 
 		if (thread_number > size_image/16) {
 			thread_number = size_image;
 		}
-		compression<<<thread_number / 1024 + 1, thread_max >>>(cuda_image, cuda_new_image, height, width, size_image, thread_number);
+		compression <<< thread_number / 1024 + 1, thread_max >>>(cuda_image, cuda_new_image, height, width, size_image, thread_number);
 		cudaDeviceSynchronize();
+
+		//cpu copies input data from gpu back to cpu
 		cudaMemcpy(new_image, cuda_new_image, size_image, cudaMemcpyDeviceToHost);
+		//release memory
 		cudaFree(cuda_image);
 		cudaFree(cuda_new_image);
 

@@ -5,16 +5,13 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
-#define SIZE 1024
+#define SIZE (2048*2048)
+#define THREADS_PER_BLOCK 1024
 
-__global__ void addition(int* a, int* b, int* c, int n) {
-	/*for (int i = 0; i < n; i++) { // Conventional way of Vector Addition with single thread
-	c[i] = a[i] + b[i];
-	}*/
-
-	int i = blockIdx.x; 			// Using GPU Blocks for Vector Addition
-		if (i < n) {
-		c[i] = a[i] + b[i];
+__global__ void addition(int* a, int* b, int* c, int* n) {
+	int index = threadIdx.x + blockIdx.x*blockDim.x;
+	if (index < n) {
+		c[index] = a[index] + b[index];
 	}
 }
 
@@ -39,8 +36,8 @@ int main(void) {
 		c[i] = 0;
 	}
 
-	// Launch addition() kernel on GPU with SIZE blocks
-	addition<<< SIZE, 1 >>>(a, b, c, SIZE);
+	// Launch addition() kernel on GPU with SIZE blocks Output:
+	addition<<< (SIZE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(a, b, c, SIZE);
 
 	// Wait for GPU threads to complete
 	cudaDeviceSynchronize(); 			// ====New Function to sync

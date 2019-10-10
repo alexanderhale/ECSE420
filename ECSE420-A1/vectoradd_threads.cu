@@ -12,8 +12,8 @@ __global__ void addition(int* a, int* b, int* c, int n) {
 	c[i] = a[i] + b[i];
 	}*/
 
-	int i = blockIdx.x; 			// Using GPU Blocks for Vector Addition
-		if (i < n) {
+	int i = threadIdx.x; 			// Using GPU Blocks for Vector Addition
+	if (i < n) {
 		c[i] = a[i] + b[i];
 	}
 }
@@ -39,8 +39,8 @@ int main(void) {
 		c[i] = 0;
 	}
 
-	// Launch addition() kernel on GPU with SIZE blocks
-	addition<<< SIZE, 1 >>>(a, b, c, SIZE);
+	// Launch addition() kernel on GPU with SIZE threads
+	addition<<< 1, SIZE >>>(a, b, c, SIZE);
 
 	// Wait for GPU threads to complete
 	cudaDeviceSynchronize(); 			// ====New Function to sync
