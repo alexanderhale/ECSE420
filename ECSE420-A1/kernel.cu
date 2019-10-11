@@ -8,67 +8,36 @@
 #include <math.h>
 #define MAX_MSE 0.00001f
 
-__global__ void process_rectification(unsigned char* image, unsigned char* new_image, unsigned int size, unsigned int thread_number) {
-	// process image
-	//unsigned int thread_pos = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
-	unsigned int thread_id = (threadIdx.x + blockIdx.x * blockDim.x + blockIdx.y * blockDim.y * blockDim.y);
-
-	for (unsigned int i = (size * thread_id)/ thread_number; i < (size *(thread_id + 1))/thread_number; i++) {
-		if ((i-3)%4 !=0) {
-			if (image[i] < 127) {
-				new_image[i] = 127;
-			}
-			else {
-				new_image[i] = image[i];
-			}
-		} else {
-			new_image[i] = image[i];
-		}
-	}
-}
-
-__global__ void process_rectification2(unsigned char* image, unsigned char* new_image, unsigned int size, unsigned int thread_number) {
-	unsigned int index = threadIdx.x + blockIdx.x * thread_number;// blockDim.x;
+__global__ void rectification(unsigned char* image, unsigned char* new_image, unsigned int size) {
+	unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
 
 	if (index < size) {
-		unsigned int pixels_per_thread = size / thread_number;
-		unsigned int end = index + pixels_per_thread;
-
-		for (unsigned int i = index; i < end; i++) {
-			if (image[i] < 127) {
-				new_image[i] = 127;
-			}
-			else {
-				new_image[i] = image[i];
-			}
+		if (image[index] < 127) {
+			new_image[index] = 127;
+		}
+		else {
+			new_image[index] = image[index];
 		}
 	}
 }
 
-__global__ void compression(unsigned char* image, unsigned char* new_image, unsigned height, unsigned width, unsigned int size, unsigned int thread_number) {
+__global__ void compression(unsigned char* image, unsigned char* new_image, unsigned width, unsigned int size, unsigned int blocks_per_row) {
+	unsigned int index = threadIdx.x + (blockIdx.x % blocks_per_row) * blockDim.x;
+	unsigned int new_index = (threadIdx.x + blockIdx.x * blockDim.x) + 4;
 
-	//unsigned int thread_id = (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);
-	unsigned int thread_id = (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);
-	// process image
-	//printf("height: %d, width: %d\n", height, width);
-	for (unsigned int i = thread_id; i < size / 16; i = i + thread_number) {
-		unsigned int y = (i / (width / 2)) * 2;
-		unsigned int x = (i % (width / 2)) * 2;
-		//printf("thread id: %d, x: %d, y: %d \n", thread_id, x, y);
-		for (unsigned int type = 0; type < 4; type++) {
-			unsigned int value = image[4 * width * y + 4 * x + type];
-			if (value < image[4 * width * y + 4 * (x + 1) + type]) {
-				value = image[4 * width * y + 4 * (x + 1) + type];
+	if (index < size) {
+		for (int i = 0; i < 4; i++) {						// iterate through R, G, B, A
+			unsigned int max = image[index];
+			if (image[index + 4 + i] > max) {				// pixel to the right
+				max = image[index + 4 + i];
 			}
-			if (value < image[4 * width * (y + 1) + 4 * x + type]) {
-				value = image[4 * width * (y + 1) + 4 * x + type];
+			if (image[index + (4 * width) + i] > max) {		// pixel below
+				max = image[index + (4 * width) + i];
 			}
-			if (value < image[4 * width * (y + 1) + 4 * (x + 1) + type]) {
-				value = image[4 * width * (y + 1) + 4 * (x + 1) + type];
+			if (image[index + (4 * width) + 4 + i] > max) {	// pixel below & to the right
+				max = image[index + (4 * width) + 4 + i];
 			}
-			new_image[width * y + x*2 + type] = value;
-
-			//printf("new value: %d, at coord: %d\n", value, width * y + x*2 + type);
+			new_image[new_index + i] = max;
 		}
 	}
 }
@@ -105,94 +74,104 @@ float get_MSE(char* input_filename_1, char* input_filename_2)
 
 int main()
 {
-	// variable definitions
-	unsigned error;
-	unsigned char *image, *new_image;
-	unsigned char* cuda_image, * cuda_new_image;
-	unsigned width, height;
-	unsigned int size_image;
-
-	// input definitions (hardcoding isn't as elegant, but is easier than passing in command-line arguments)
-		// TODO add command-line arguments back in before project submission
+	// file definitions
 	char* filename1 = "test.png";						// change these depending on what we're doing
-	char* filename2 = "test_rectify_result.png";		// output for rectify & pooling, file2 for comparison
-	// change mode
-	char* mode = "rectify";							
+	char* filename2 = "test_rectify_result.png";		// output for rectify
+	char* filename3 = "test_pooling_result.png";		// output for pooling
+	char* filename4 = "test_rectify_expected_result.png";	// filename for rectify comparison
+	char* filename5 = "test_pooling_expected_result.png";	// filename for pooling comparison
 
 	// load input image
-	error = lodepng_decode32_file(&image, &width, &height, filename1);
+	unsigned char* image;
+	unsigned width, height;
+	unsigned error = lodepng_decode32_file(&image, &width, &height, filename1);
 	if (error) printf("error %u: %s\n", error, lodepng_error_text(error));
+	unsigned int size_image = width * height * 4 * sizeof(unsigned char); // height x width number of pixels, 4 layers (RGBA) for each pixel, 1 char for each value
 
 	// define number of threads
-	unsigned int thread_number = 1024;		// number of threads per block we're using
+	unsigned int thread_number = 1000;		// number of threads per block we're using
 	unsigned int thread_max = 1024;			// hardware limit: maximum number of threads per block
 
-	// Rectify
-	if (strcmp(mode, "rectify") == 0) {
-		size_image = width * height * 4 * sizeof(unsigned char);
-		new_image = (unsigned char*)malloc(size_image);
-
-		//allocates storage on gpu
-		cudaMalloc((void**)& cuda_image, size_image);
-		cudaMalloc((void**)& cuda_new_image, size_image);
-
-		//cpu copies input data from cpu to gpu
-		cudaMemcpy(cuda_image, image, size_image, cudaMemcpyHostToDevice);
-		
-		// call method on device
-		unsigned int num_blocks = (size_image + thread_number - 1) / thread_number;
-		process_rectification2 <<< num_blocks, thread_number >>> (cuda_image, cuda_new_image, size_image, thread_number);
-		cudaDeviceSynchronize();
-
-		//cpu copies input data from gpu back to cpu
-		cudaMemcpy(new_image, cuda_new_image, size_image, cudaMemcpyDeviceToHost);
-		cudaFree(cuda_image);
-		cudaFree(cuda_new_image);
-
-		lodepng_encode32_file(filename2, new_image, width, height);
-	}
-	// Pooling
-	else if (strcmp(mode, "pooling") == 0) {
-		size_image = width * height * 4 * sizeof(unsigned char);
-		new_image = (unsigned char*) malloc(size_image);
-
-		//allocates storage on gpu
-		cudaMalloc((void**)& cuda_image, size_image);
-		cudaMalloc((void**)& cuda_new_image, size_image);
-
-		//cpu copies input data from cpu to gpu
-		cudaMemcpy(cuda_image, image, size_image, cudaMemcpyHostToDevice);
-
-		if (thread_number > size_image/16) {
-			thread_number = size_image;
-		}
-		compression <<< thread_number / 1024 + 1, thread_max >>>(cuda_image, cuda_new_image, height, width, size_image, thread_number);
-		cudaDeviceSynchronize();
-
-		//cpu copies input data from gpu back to cpu
-		cudaMemcpy(new_image, cuda_new_image, size_image, cudaMemcpyDeviceToHost);
-		//release memory
-		cudaFree(cuda_image);
-		cudaFree(cuda_new_image);
-
-		lodepng_encode32_file(filename2, new_image, width/2, height/2);
+	if (thread_number > thread_max) {		// can't have more threads than the hardware limit
+		thread_number = thread_max;
 	}
 
-	else if (strcmp(mode, "compare") == 0) {
-		// get mean squared error between image1 and image2
-		float MSE = get_MSE(filename1, filename2);
+	/********** Rectify Start ***********/
+	// allocate memory space on GPU
+	unsigned char* cuda_image, * cuda_new_image;
+	cudaMalloc((void**)& cuda_image, size_image);
+	cudaMalloc((void**)& cuda_new_image, size_image);
 
-		if (MSE < MAX_MSE) {
-			printf("Images are equal (MSE = %f, MAX_MSE = %f)\n", MSE, MAX_MSE);
-		}
-		else {
-			printf("Images are NOT equal (MSE = %f, MAX_MSE = %f)\n", MSE, MAX_MSE);
-		}
-		return 0;
+	// CPU copies input data from CPU to GPU
+	cudaMemcpy(cuda_image, image, size_image, cudaMemcpyHostToDevice);
+
+	// figure out how many blocks we need for this task
+	unsigned int num_blocks = (size_image + thread_number - 1) / thread_number;
+
+	// call method on GPU
+	rectification <<< num_blocks, thread_number >>> (cuda_image, cuda_new_image, size_image);
+	cudaDeviceSynchronize();
+
+	// CPU copies input data from GPU back to CPU
+	unsigned char* new_image = (unsigned char*)malloc(size_image);
+	cudaMemcpy(new_image, cuda_new_image, size_image, cudaMemcpyDeviceToHost);
+	cudaFree(cuda_image);
+	cudaFree(cuda_new_image);
+
+	lodepng_encode32_file(filename2, new_image, width, height);
+	/********** Rectify End ***********/
+
+	/********** Pooling Start ***********/
+	// allocate memory space on GPU
+	unsigned char* cuda_image_pool, * cuda_new_image_pool;
+	cudaMalloc((void**)& cuda_image_pool, size_image);
+	cudaMalloc((void**)& cuda_new_image_pool, size_image);
+
+	// CPU copies input data from CPU to GPU
+	cudaMemcpy(cuda_image_pool, image, size_image, cudaMemcpyHostToDevice);
+
+	// maximum number of threads we can use is 1 per 16 pixels
+		// that's because we can use maximum 1 thread per 2x2 area, and each pixel in that 2x2 area has 4 values
+	if (thread_number > ceil(size_image / 16)) {
+		thread_number = ceil(size_image / 16);
 	}
 
+	// figure out how many blocks we need for this task
+	num_blocks = ceil((size_image / thread_number) / 16) + 1;
+	unsigned int blocks_per_row = ceil(width / thread_number);
+
+	// call method on GPU
+	compression <<< num_blocks, thread_number >>> (cuda_image_pool, cuda_new_image_pool, width, size_image, blocks_per_row);
+	cudaDeviceSynchronize();
+
+	// CPU copies input data from GPU back to CPU
+	unsigned char* new_image_pool = (unsigned char*)malloc(size_image);
+	cudaMemcpy(new_image_pool, cuda_new_image_pool, size_image, cudaMemcpyDeviceToHost);
+	cudaFree(cuda_image_pool);
+	cudaFree(cuda_new_image_pool);
+
+	lodepng_encode32_file(filename3, new_image_pool, width / 2, height / 2);
+	/********** Pooling End ***********/
+
+	/********** Comparison Start ***********/
+	float MSE_rect = get_MSE(filename2, filename4);
+	if (MSE_rect < MAX_MSE) {
+		printf("Rectified image is equal to example (MSE = %f, MAX_MSE = %f)\n", MSE_rect, MAX_MSE);
+	}
+	else {
+		printf("Rectified image is NOT equal to example (MSE = %f, MAX_MSE = %f)\n", MSE_rect, MAX_MSE);
+	}
+	float MSE_pool = get_MSE(filename3, filename5);
+	if (MSE_pool < MAX_MSE) {
+		printf("Pooled image is equal to example (MSE = %f, MAX_MSE = %f)\n", MSE_pool, MAX_MSE);
+	}
+	else {
+		printf("Pooled image is NOT equal to example (MSE = %f, MAX_MSE = %f)\n", MSE_pool, MAX_MSE);
+	}
+	/********** Comparison End ***********/
 
 	free(image);
 	free(new_image);
+	free(new_image_pool);
 	return 0;
 }
