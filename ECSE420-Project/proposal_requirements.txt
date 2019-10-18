@@ -1,0 +1,5 @@
+Please deposit here, in plain text, the project proposal for your group. You should clearly and concisely describe the problem that you are addressing and an outline of the approach that you will undertake. The project can deal with any aspects of parallel, but also of distributed computing as well. While most students get attracted to develop parallel programs for some specific problem of their interest, exploration of interesting parallel architectures, tools, languages etc. are welcome. 
+
+Often, students focus on developing a parallel program for some problem of their interest, which is fine, but keep in mind that the project cannot be on well-known solutions that exist out there. 
+
+ The more clear you are about the project, the more feedback you can obtain at this stage. After your submission deadline, you can expect the feedback in about one week. Incorporating any feedback in the final project can help you to achieve the most out of your project.
