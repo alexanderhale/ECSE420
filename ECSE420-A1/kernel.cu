@@ -130,7 +130,7 @@ int main()
 	// CPU copies input data from CPU to GPU
 	cudaMemcpy(cuda_image_pool, image, size_image, cudaMemcpyHostToDevice);
 
-	// maximum number of threads we can use is 1 per 16 pixels
+	// maximum number of threads we can use is 1 per 16 pixel values
 		// that's because we can use maximum 1 thread per 2x2 area, and each pixel in that 2x2 area has 4 values
 	if (thread_number > ceil(size_image / 16)) {
 		thread_number = ceil(size_image / 16);
