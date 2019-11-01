@@ -1,0 +1,19 @@
+ECSE 420 Project
+Group 25
+
+*Problem Statement*
+For our ECSE 420 group project, we will implement a parallelized version of the merge sort algorithm. The merge sort algorithm involves sorting an array of values by repeatedly halving the array and sorting the individual halves. This procedure is computationally expensive when performed iteratively or recursively, and performance gains can be realized by performing the computation in parallel. An additional component of the project will be visualizing and measuring the parallelization. The goal will be to create a graphical display of the merge sort algorithm so that its speedup compared to the recursive and/or iterative versions of the algorithm is visually demonstrated.  
+
+*Methodology*
+The approach for parallelizing merge sort will be as follows:
+	1) Begin the algorithm with the usual merge sort procedure. That is, choose one of the elements of the array at random to be the pivot, p. Optimal sorting speed occurs when p is the median of the values in the array, but it is faster to choose p randomly rather than spend time finding the median of the array.
+	2) Next, assign threads to each of the other input array elements. The best case occurs when the number of threads available on the selected hardware exceeds the length of the array, in which case one thread will be assigned to each element. If the array is too large, then the elements of the array will be divided equally among the available threads.
+	3) Assign each element of the array into one of two categories: category L if the element is less than p, and category R if the element is greater than or equal to p. This step is one of the opportunities for speedup, because each thread is performing this operation in parallel instead of having to iterate through each of the elements of the array.
+	4) Recursively call steps 1-3 on the L and R lists generated in step 3. Each recursive call is executed in its own thread for maximum parallelization. The base case of the recursive algorithm will occur either when the list passed into the algorithm is one element long, or the list gets short enough that it would be faster to sort it iteratively with one thread rather than with a multi-threaded recursive call (this minimum list length will have to be determined through experimentation).
+	5) Return the sorted lists back up through the recursive call stack, slotting each chunk of the array into its appropriate location in the resulting sorted array.
+
+*Platform*
+The parallelized version of the merge sort algorithm will be implemented in C, and CUDA will be used for parallelization support. The parallelization hardware will be the GPUs available in the course laboratory computers. The benchmark iterative and recursive versions of the algorithm will also be implemented in C to ensure a fair comparison of the speedup between the implementations.
+
+*Testing and Evaluation*
+This algorithm will be tested against benchmark iterative and recursive implementations of the merge sort algorithm. Accuracy will be determined by verifying that the array is returned in sorted order. Performance will be gauged based on the speedup of the parallelized version of the algorithm over the iterative and recursive implementations of the algorithm.
