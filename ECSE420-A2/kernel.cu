@@ -7,11 +7,16 @@
 #include "b_32.h"
 #include "b_512.h"
 #include "b_1024.h"
+#include "lodepng.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #define MAX_MSE 0.00001f
+
+extern const float w3[3][3]; 
+extern const float w5[5][5]; 
+extern const float w7[7][7];
 
 __global__ void convolution(unsigned char* image, unsigned char* new_image, unsigned int matrix_dim) {
 	// TODO:
@@ -22,25 +27,39 @@ __global__ void convolution(unsigned char* image, unsigned char* new_image, unsi
 	
 	// basic thread block indexing
 	unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
-	unsigned int new_index = threadIdx.x + blockIdx.x * blockDim.x;
+	//unsigned int new_index = threadIdx.x + blockIdx.x * blockDim.x;
+	unsigned int size = sizeof(image)/sizeof(image[0]) - matrix_dim * something;
 
-	if (matrix_dim == 3) {
-		// TODO compute convolution from old image with 3x3 convolution image (w3 from wm.h)
-		for(int ii = 0; ii < 3; ii++) {
-			for(int jj = 0; jj < 3; jj++) {
-				new_image[new_index] += image[index] * w3[ii][jj];
+	if (index < size) {
+
+		if (matrix_dim == 3) {
+			//loop through each colour
+			for (int i = 0; i < 4; i++) {
+				if (i == 3) {
+					//take middle value of "convolution" block for alpha
+				}
+				// TODO compute convolution from old image with 3x3 convolution image (w3 from wm.h)
+				for (int ii = 0; ii < 3; ii++) {
+					for (int jj = 0; jj < 3; jj++) {
+						// the indexing here needs a lot of work
+						// the w3 matrix is right
+						// image[index] needs to factor in index, i, ii, jj, to achieve something like image[(index+i) + ii - 1 * (image_width*
+						new_image[index/**/] += image[index/**/] * w3[ii][jj];
+					}
+				}
 			}
 		}
-	} else if (matrix_dim == 5) {
-		// TODO 
-			// compute convolution from old image with 5x5 convolution image (w5 from wm.h)
-	} else {
-		// TODO 
-			// compute convolution from old image with 7x7 convolution image (w7 from wm.h)
+		else if (matrix_dim == 5) {
+			// TODO 
+				// compute convolution from old image with 5x5 convolution image (w5 from wm.h)
+			//same as above
+		}
+		else {
+			// TODO 
+				// compute convolution from old image with 7x7 convolution image (w7 from wm.h)
+			//same as above
+		}
 	}
-
-	// TODO
-		// place result in new image
 }
 
 __global__ void mat_invert(unsigned char* A, unsigned char* x, unsigned char* b) {
@@ -118,6 +137,7 @@ int main()
 	// TODO update for convolution
 
 	// call method on GPU
+	// use numbers here that match the output image (slightly smaller than input)
 	convolution <<< num_blocks, thread_number >>> (cuda_image, cuda_new_image, conv_size);
 	cudaDeviceSynchronize();
 
@@ -143,16 +163,19 @@ int main()
 
 	
 	
-	/***** MATRIX INVERSION START *****/
+	/***** MATRIX INVERSION START *****
 	// variable definition
-	unsigned int* A = A_32  // or A_512 or A_1024
-	unsigned int* b = b_32	// or b_512 or b_1024
+	float* A[32] = A_32;  // or A_512 or A_1024
+	unsigned int* b = b_32;	// or b_512 or b_1024
 	
 	// allocate memory space on GPU
 	unsigned int* cuda_A, * cuda_b, * cuda_x;
 	cudaMalloc((void**)& cuda_A, sizeof(A));
 	cudaMalloc((void**)& cuda_b, sizeof(b));
 	cudaMalloc((void**)& cuda_x, sizeof(b));
+
+	//TODO make this actually correct
+	size_t needs_another_variable;
 
 	// CPU copies input data from CPU to GPU
 	cudaMemcpy(cuda_A, A, sizeof(A), cudaMemcpyHostToDevice);
@@ -168,12 +191,14 @@ int main()
 
 	// CPU copies input data from GPU back to CPU
 	unsigned int* x = (unsigned int*)malloc(sizeof(b));
-	cudaMemcpy(x, cuda_x, cudaMemcpyDeviceToHost);
+	//TODO make the third variable the size
+	cudaMemcpy(x, cuda_x, needs_another_variable, cudaMemcpyDeviceToHost);
 	cudaFree(cuda_A);
 	cudaFree(cuda_b);
 	cudaFree(cuda_x);
 
 	// verify that the result is correct
 	// TODO verify that A*x - b = 0 (ideally in parallel)
+	*/
 	return 0;
 }

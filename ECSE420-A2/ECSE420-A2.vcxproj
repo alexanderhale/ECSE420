@@ -81,13 +81,13 @@
     <CudaCompile Include="kernel.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\ECSE420-A1\lodepng.h" />
     <ClInclude Include="A_1024.h" />
     <ClInclude Include="A_32.h" />
     <ClInclude Include="A_512.h" />
     <ClInclude Include="b_1024.h" />
     <ClInclude Include="b_32.h" />
     <ClInclude Include="b_512.h" />
+    <ClInclude Include="lodepng.h" />
     <ClInclude Include="wm.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
