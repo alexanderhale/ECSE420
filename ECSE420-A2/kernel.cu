@@ -1,4 +1,3 @@
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "wm.h"
@@ -18,10 +17,20 @@ __global__ void convolution(unsigned char* image, unsigned char* new_image, unsi
 	// TODO:
 		// find index of this block & thread in original image
 		// find index of this block & thread in new image
+	//unsigned int index = threadIdx.x + (blockIdx.x % blocks_per_row) * blockDim.x;
+	//unsigned int new_index = (threadIdx.x + blockIdx.x * blockDim.x) + 4;
+	
+	// basic thread block indexing
+	unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
+	unsigned int new_index = threadIdx.x + blockIdx.x * blockDim.x;
 
 	if (matrix_dim == 3) {
-		// TODO 
-			// compute convolution from old image with 3x3 convolution image (w3 from wm.h)
+		// TODO compute convolution from old image with 3x3 convolution image (w3 from wm.h)
+		for(int ii = 0; ii < 3; ii++) {
+			for(int jj = 0; jj < 3; jj++) {
+				new_image[new_index] += image[index] * w3[ii][jj];
+			}
+		}
 	} else if (matrix_dim == 5) {
 		// TODO 
 			// compute convolution from old image with 5x5 convolution image (w5 from wm.h)
