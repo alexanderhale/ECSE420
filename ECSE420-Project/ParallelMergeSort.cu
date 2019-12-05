@@ -1,4 +1,3 @@
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <math.h>
@@ -12,33 +11,27 @@
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
 
-__global__ void mergeSort(int* startingArr, int* endingArr, unsigned int N, unsigned int level, unsigned int threads) {
+__global__ void mergeSort(int* startingArr, int* endingArr, unsigned int N, unsigned int sortedArraySize, unsigned int threads, unsigned int totalSortedArrays) {
 
 	// Assigns thread ID 
 	unsigned int id = threadIdx.x + blockIdx.x * blockDim.x;
 
-	// Creates individual portions to be sorted based off level, adds 1 if a remainder exists 
-	unsigned int totalArrays = N / (level);
-	if (totalArrays * level != N) {
-		totalArrays = totalArrays + 1;
-	}
+	// index of the first element of the first sorted array that this thread is responsible for
+	unsigned startElementIndex = id * sortedArraySize;
 
-	// Initial start is based off of ID and current level 
-	unsigned arrayBeginning = id * level;
+	// loop through each of the sorted arrays that this thread is responsible for merging
+	for (unsigned int currentArray = id; currentArray < totalSortedArrays; currentArray += threads) {
 
-	// For loop for mergesort, increments by number of threads over time 
-	for (unsigned int currentArray = id; currentArray < totalArrays; currentArray = currentArray + threads) {
+		// calculate the middle and end element indices for this merge
+		unsigned arrayMiddle = MIN(startElementIndex + (sortedArraySize / 2), N);
+		unsigned arrayEnd = MIN(startElementIndex + sortedArraySize, N);
 
-		// Takes middle and end values for single sort
-		unsigned arrayMiddle = MIN(arrayBeginning + (level / 2), N);
-		unsigned arrayEnd = MIN(arrayBeginning + level, N);
-
-		// Creates indexes for individual sort to increment
-		unsigned int leftArrayIndex = arrayBeginning;
+		// create variables to hold the left and right indices of the merge as it proceeds
+		unsigned int leftArrayIndex = startElementIndex;
 		unsigned int rightArrayIndex = arrayMiddle;
 
-		// Individual merge for given "level" worth of values 
-		for (unsigned int i = arrayBeginning; i < arrayEnd; i++) {
+		// perform the merge of two sorted sub-arrays into one sorted array
+		for (unsigned int i = startElementIndex; i < arrayEnd; i++) {
 
 			// If middle array is larger, temp start is index in sorted array 
 			if (leftArrayIndex < arrayMiddle && (rightArrayIndex >= arrayEnd || startingArr[leftArrayIndex] < startingArr[rightArrayIndex])) {
@@ -48,26 +41,24 @@ __global__ void mergeSort(int* startingArr, int* endingArr, unsigned int N, unsi
 
 			// If middle array start is smaller, middle array is index in sorted array 
 			else {
-
 				endingArr[i] = startingArr[rightArrayIndex];
 				rightArrayIndex++;
 			}
 		}
 
-		// Increments to next start point based off of thread count 
-		arrayBeginning = arrayBeginning + threads * level;
-
+		// increment to the start point of the next merge
+		startElementIndex += threads * sortedArraySize;
 	}
-
 }
 
 int main() {
-
-	// Define
 	printf("Parallelized Merge Sort Has Begun");
 
 	unsigned int N = 1000000;
 	unsigned int threads = 32;
+	if (threads > 1024) {
+		threads = 1024;
+	}
 
 	// Define arrays for system
 	int* startingArray = new int[N];
@@ -75,74 +66,53 @@ int main() {
 	int* cudaStartArray;
 	int* cudaEndArray;
 
-	// Initialize starting array to values of 0 to 10000 randomly   
+	// Initialize array to random values 0 and 10000   
 	for (int i = 0; i < N; i++) {
 		startingArray[i] = rand() % 10000;
 	}
 
 	// Copy starting Array values into end Array
-
 	memcpy(endingArray, startingArray, N * sizeof(int));
 
-	// Clock values 
+	// Clock variable
+	clock_t startTime = clock();
 
-	clock_t clockStart, clockEnd, clockTemp;
-	clockStart = clock();
-
-	for (unsigned int level = 2; level < N * 2; level = level * 2) {
+	// iterate through the levels of the merge tree, using the size of the individual sorted arrays at each level as the loop index
+	for (unsigned int sortedArraySize = 2; sortedArraySize < N * 2; sortedArraySize = sortedArraySize * 2) {
+		clock_t loopTime = clock();
 
 		cudaSetDevice(0);
 
-		// Allocate cuda memory for start and end array 
-
+		// Allocate memory on device for the original list and the list at the end of this step
 		cudaMalloc((void**)& cudaStartArray, N * sizeof(int));
 		cudaMalloc((void**)& cudaEndArray, N * sizeof(int));
 
-		// Copy data from original arrays into cuda version 
-
+		// Copy data from host to device
 		cudaMemcpy(cudaStartArray, startingArray, N * sizeof(int), cudaMemcpyHostToDevice);
 		cudaMemcpy(cudaEndArray, endingArray, N * sizeof(int), cudaMemcpyHostToDevice);
 
-		// Change thread count based off of input 
+		// calculate how many individual arrays there are at this level of the merge tree
+		unsigned int totalSortedArrays = N / sortedArraySize + (N % sortedArraySize != 0);
 
-		if (threads > 1024) {
-			threads = 1024;
-		}
-
-		// Merge sort formula 
-
-		mergeSort << <1, threads >> > (cudaStartArray, cudaEndArray, N, level, threads);
+		// call MergeSort kernel function
+		mergeSort <<<1, threads>>> (cudaStartArray, cudaEndArray, N, sortedArraySize, threads, totalSortedArrays);
 
 		// Synchronize threads 
-
 		cudaDeviceSynchronize();
 
-		// Copy end array outcome from cuda version to original
-
+		// Copy resulting list to host
 		cudaMemcpy(endingArray, cudaEndArray, N * sizeof(int), cudaMemcpyDeviceToHost);
 
 		// Free cuda memory 
-
 		cudaFree(cudaStartArray);
 		cudaFree(cudaEndArray);
-		clockTemp = clock();
-		printf("\nAt Iteration : %d || Max Sections Sorted : %d  || Iteration Sort Time :  %f", (int)log2(level), level, ((float)(clockTemp - clockStart)) / CLOCKS_PER_SEC);
 
-		/*
-		//Prints individual value at each index
-		for (int j = 0; j < N; j++) {
-			printf("%d ", endingArray[j]);
-			printf("\n");
-		}
-		*/
-
-		// Copies endingArray to startingArray  
+		// Copies endingArray to startingArray to prepare for the next step
 		memcpy(startingArray, endingArray, N * sizeof(int));
 
+		// printing timing results
+		printf("\nMerge Tree Level: %d || Size of Sorted Arrays: %d  || Level Merge Time:  %f", (int)log2(sortedArraySize), sortedArraySize, (float)(clock() - loopTime) / CLOCKS_PER_SEC);
 	}
-
-	// End time clock value  
-	clockEnd = clock();
 
 	printf(" \nFINAL ITERATION : ");
 
@@ -166,9 +136,7 @@ int main() {
 	}
 
 	// Prints total time of system 
-	printf("Total Merge Sort Time :  %f", ((float)(clockEnd - clockStart)) / CLOCKS_PER_SEC);
+	printf("Total Merge Sort Time :  %f", ((float)(clock() - startTime)) / CLOCKS_PER_SEC);
 
 	return 0;
 }
-
-
