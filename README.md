@@ -1,5 +1,5 @@
 # ECSE420
-Parallel Computing coursework at McGill University. Parallelization is implemented by GPUs using CUDA. Code is written either in C++ or Python (using the Numba package to interface with CUDA).
+Parallel Computing coursework at McGill University. Parallelization is implemented by GPUs using CUDA. Code is written either in C or Python (using the Numba package to interface with CUDA).
 
 ## Lab 1 - Introduction
 Learning the basics of CUDA via parallel implementations of image rectification and max-pooling.
